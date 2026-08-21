@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="ru">
+<html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Домашнее задание</title>
+<title>Homework</title>
 <style>
   :root {
     --teal: #1f6f6b;
@@ -14,6 +14,7 @@
     --border: #dfe3e3;
     --correct: #1f8a52;
     --incorrect: #b3392c;
+    --muted: #6b7280;
   }
   * { box-sizing: border-box; }
   body {
@@ -108,6 +109,13 @@
     background: #fbe9e7;
     color: var(--incorrect);
   }
+  .feedback-line .locked-note {
+    display: block;
+    margin-top: 4px;
+    font-size: 0.85em;
+    font-style: italic;
+    color: var(--muted);
+  }
 
   #submit-btn {
     width: 100%;
@@ -138,6 +146,11 @@
     font-size: 2.4em;
     font-weight: bold;
   }
+  #result-block .attempt-note {
+    margin-top: 8px;
+    font-size: 0.9em;
+    opacity: 0.9;
+  }
 
   #error-block {
     display: none;
@@ -152,69 +165,75 @@
 <body>
 
 <header>
-  <h1 id="page-title">Домашнее задание</h1>
-  <p id="page-subtitle">Заполни ответы и нажми "Отправить" — результат придёт сразу</p>
+  <h1 id="page-title">Homework</h1>
+  <p id="page-subtitle">Fill in your answers and press "Submit" — you'll get your result right away</p>
 </header>
 
 <main>
   <div id="student-name-block">
-    <label for="student-name">Имя и фамилия</label>
-    <input type="text" id="student-name" placeholder="например: Алия Нурланова">
+    <label for="student-name">Full name</label>
+    <input type="text" id="student-name" placeholder="e.g. Alex Morgan">
   </div>
 
   <div id="questions-container"></div>
 
-  <button id="submit-btn">Отправить на проверку</button>
+  <button id="submit-btn">Submit for checking</button>
 
   <div id="error-block"></div>
 
   <div id="result-block">
     <div class="big-percent" id="result-percent"></div>
     <div id="result-text"></div>
+    <div class="attempt-note" id="result-attempt-note"></div>
   </div>
 </main>
 
 <script>
 /* =========================================================================
-   НАСТРОЙКИ ЭТОЙ НЕДЕЛИ — единственное, что обычно нужно менять каждый раз.
-   Правильные ответы сюда НЕ вписываются — они хранятся только на сервере,
-   на листе AnswerKey, и сверяются там же.
+   THIS WEEK'S SETTINGS — usually the only thing you need to change each week.
+   Correct answers are NOT written here — they live only on the server, in
+   the AnswerKey sheet, and are checked there.
    ========================================================================= */
 
 const CONFIG = {
-  // URL веб-приложения Apps Script после деплоя (Deploy → New deployment → Web app)
+  // Apps Script web app URL (Deploy → New deployment → Web app)
   SCRIPT_URL: "https://script.google.com/macros/s/AKfycbz7CnzOs39aO8jTRa7C7Zdp3thOrDvQEDNV88QE0bV4obvLcWDFYp6AuIFd4sqd4Rs/exec",
 
-  // Должен совпадать с WeekID в листе AnswerKey для этой недели
+  // Must match the WeekID in the AnswerKey sheet for this week
   WEEK_ID: "week-01",
 
-  PAGE_TITLE: "ДЗ — Неделя 1: Линейные уравнения",
-  PAGE_SUBTITLE: "Заполни ответы и нажми «Отправить» — результат придёт сразу"
+  PAGE_TITLE: "HW — Week 1: Quadratics, Calculus & Simultaneous Equations",
+  PAGE_SUBTITLE: "Fill in your answers and press “Submit” — you'll get your result right away"
 };
 
-// Список вопросов ЭТОЙ недели. type: "numeric" | "text" | "mc"
-// Для "mc" указываешь choices — варианты, которые увидит ученик.
-// id должен совпадать с QuestionID в листе AnswerKey.
+// This week's questions. type: "numeric" | "text" | "mc"
+// For "mc", give `choices` — the options the student will see.
+// id must match the QuestionID in the AnswerKey sheet.
 const QUESTIONS = [
   {
     id: "q1",
     type: "numeric",
-    title: "1) Реши уравнение: 3x + 5 = 20. Чему равен x?"
+    title: "1) Solve 2x² − 3x − 5 = 0. Give the positive root as a decimal."
   },
   {
     id: "q2",
     type: "text",
-    title: "2) Упрости выражение: 2(x + 3) − x. Запиши в виде «x+6»"
+    title: "2) Differentiate y = 3x² − 4x + 7 with respect to x. Give dy/dx in the form ax + b."
   },
   {
     id: "q3",
     type: "mc",
-    title: "3) Какое из уравнений не имеет решений?",
+    title: "3) Which expression is equivalent to (2x³)²?",
     choices: [
-      { value: "a", label: "a) x + 1 = x + 1" },
-      { value: "b", label: "b) x + 1 = x + 2" },
-      { value: "c", label: "c) 2x = 4" }
+      { value: "a", label: "a) 4x⁵" },
+      { value: "b", label: "b) 4x⁶" },
+      { value: "c", label: "c) 2x⁶" }
     ]
+  },
+  {
+    id: "q4",
+    type: "numeric",
+    title: "4) Solve simultaneously: 2x + y = 11 and x − y = 1. Find x."
   }
 ];
 
@@ -253,7 +272,7 @@ QUESTIONS.forEach(function (q) {
     const input = document.createElement('input');
     input.type = 'text';
     input.id = 'input-' + q.id;
-    input.placeholder = q.type === 'numeric' ? 'Введи число' : 'Введи ответ';
+    input.placeholder = q.type === 'numeric' ? 'Enter a number' : 'Enter your answer';
     card.appendChild(input);
   }
 
@@ -294,20 +313,20 @@ document.getElementById('submit-btn').addEventListener('click', function () {
 
   const studentName = document.getElementById('student-name').value.trim();
   if (!studentName) {
-    showError('Впиши, пожалуйста, имя и фамилию перед отправкой.');
+    showError('Please enter your full name before submitting.');
     return;
   }
 
   const answers = collectAnswers();
   const btn = document.getElementById('submit-btn');
   btn.disabled = true;
-  btn.textContent = 'Проверяю...';
+  btn.textContent = 'Checking...';
 
   fetch(CONFIG.SCRIPT_URL, {
     method: 'POST',
-    // ВАЖНО: text/plain, а не application/json — это убирает preflight
-    // OPTIONS-запрос, который Apps Script Web App по умолчанию не обрабатывает.
-    // Тело всё равно нормальный JSON, сервер сам его парсит.
+    // IMPORTANT: text/plain, not application/json — this avoids the CORS
+    // preflight OPTIONS request, which Apps Script Web Apps don't handle
+    // by default. The body is still valid JSON — the server parses it itself.
     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
     body: JSON.stringify({
       studentName: studentName,
@@ -318,24 +337,32 @@ document.getElementById('submit-btn').addEventListener('click', function () {
     .then(function (res) { return res.json(); })
     .then(function (data) {
       btn.disabled = false;
-      btn.textContent = 'Отправить на проверку';
+      btn.textContent = 'Submit for checking';
 
       if (data.error) {
-        showError('Ошибка: ' + data.error);
+        showError('Error: ' + data.error);
         return;
       }
 
-      // Разбор ошибок по каждому вопросу
       Object.keys(data.feedback).forEach(function (qId) {
         const fb = data.feedback[qId];
         const line = document.getElementById('feedback-' + qId);
         if (!line) return;
         if (fb.correct) {
-          line.textContent = 'Верно';
+          line.textContent = 'Correct';
           line.className = 'feedback-line correct';
         } else {
-          line.textContent = 'Неверно' + (fb.hint ? ' — ' + fb.hint : '');
+          line.textContent = 'Incorrect' + (fb.hint ? ' — ' + fb.hint : '');
           line.className = 'feedback-line incorrect';
+          if (!fb.hint && !data.passed) {
+            const lockedNote = document.createElement('span');
+            lockedNote.className = 'locked-note';
+            const attemptsLeft = Math.max(0, data.attemptsBeforeHints - data.attempt);
+            lockedNote.textContent = attemptsLeft > 0
+              ? 'Hint unlocks in ' + attemptsLeft + ' more attempt' + (attemptsLeft === 1 ? '' : 's') + ' if still below ' + data.passThreshold + '%.'
+              : 'Hint should be shown — refresh and check your submission.';
+            line.appendChild(lockedNote);
+          }
         }
       });
 
@@ -344,15 +371,27 @@ document.getElementById('submit-btn').addEventListener('click', function () {
       resultBlock.className = data.passed ? 'pass' : 'fail';
       document.getElementById('result-percent').textContent = data.percent + '%';
       document.getElementById('result-text').textContent =
-        data.earned + ' из ' + data.possible + ' баллов' +
-        (data.passed ? ' — задание засчитано' : ' — нужно 80%, попробуй ещё раз позже');
+        data.earned + ' out of ' + data.possible + ' points' +
+        (data.passed ? ' — homework passed!' : ' — you need ' + data.passThreshold + '%, try again');
+
+      const attemptNote = document.getElementById('result-attempt-note');
+      if (data.passed) {
+        attemptNote.textContent = 'Attempt ' + data.attempt + '.';
+      } else if (data.hintsUnlocked) {
+        attemptNote.textContent = 'Attempt ' + data.attempt + '. Hints for wrong answers are shown above.';
+      } else {
+        const attemptsLeft = Math.max(0, data.attemptsBeforeHints - data.attempt);
+        attemptNote.textContent = 'Attempt ' + data.attempt + '. Hints unlock from attempt ' +
+          data.attemptsBeforeHints + ' if you are still below ' + data.passThreshold + '%' +
+          (attemptsLeft > 0 ? ' (' + attemptsLeft + ' more attempt' + (attemptsLeft === 1 ? '' : 's') + ' to go)' : '') + '.';
+      }
 
       resultBlock.scrollIntoView({ behavior: 'smooth' });
     })
     .catch(function (err) {
       btn.disabled = false;
-      btn.textContent = 'Отправить на проверку';
-      showError('Не получилось отправить. Проверь интернет и попробуй ещё раз. (' + err.message + ')');
+      btn.textContent = 'Submit for checking';
+      showError('Could not submit. Check your connection and try again. (' + err.message + ')');
     });
 });
 </script>
