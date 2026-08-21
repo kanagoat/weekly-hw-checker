@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Домашнее задание</title>
+<style>
+  :root {
+    --teal: #1f6f6b;
+    --teal-dark: #14504d;
+    --charcoal: #2b2f33;
+    --bg: #f7f8f8;
+    --card: #ffffff;
+    --border: #dfe3e3;
+    --correct: #1f8a52;
+    --incorrect: #b3392c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: Calibri, "Segoe UI", Arial, sans-serif;
+    background: var(--bg);
+    color: var(--charcoal);
+  }
+  header {
+    background: var(--charcoal);
+    color: #fff;
+    padding: 28px 20px;
+    text-align: center;
+  }
+  header h1 {
+    font-family: Cambria, Georgia, serif;
+    margin: 0 0 6px 0;
+    font-size: 1.6em;
+  }
+  header p { margin: 0; opacity: 0.8; font-size: 0.95em; }
+
+  main {
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 24px 16px 60px 16px;
+  }
+
+  #student-name-block {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px;
+    margin-bottom: 20px;
+  }
+  #student-name-block label {
+    display: block;
+    font-weight: bold;
+    margin-bottom: 8px;
+  }
+  #student-name-block input {
+    width: 100%;
+    padding: 10px 12px;
+    font-size: 1em;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+  }
+
+  .question-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px;
+    margin-bottom: 16px;
+  }
+  .question-card .q-title {
+    font-family: Cambria, Georgia, serif;
+    font-weight: bold;
+    margin-bottom: 10px;
+    font-size: 1.05em;
+  }
+  .question-card input[type="text"] {
+    width: 100%;
+    padding: 10px 12px;
+    font-size: 1em;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+  }
+  .mc-options label {
+    display: block;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    margin-bottom: 6px;
+    cursor: pointer;
+  }
+  .mc-options input { margin-right: 8px; }
+
+  .feedback-line {
+    margin-top: 10px;
+    padding: 8px 10px;
+    border-radius: 6px;
+    font-size: 0.95em;
+    display: none;
+  }
+  .feedback-line.correct {
+    display: block;
+    background: #e6f4ea;
+    color: var(--correct);
+  }
+  .feedback-line.incorrect {
+    display: block;
+    background: #fbe9e7;
+    color: var(--incorrect);
+  }
+
+  #submit-btn {
+    width: 100%;
+    padding: 14px;
+    font-size: 1.05em;
+    background: var(--teal);
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    font-weight: bold;
+  }
+  #submit-btn:hover { background: var(--teal-dark); }
+  #submit-btn:disabled { opacity: 0.6; cursor: default; }
+
+  #result-block {
+    display: none;
+    margin-top: 24px;
+    padding: 20px;
+    border-radius: 10px;
+    text-align: center;
+    color: #fff;
+  }
+  #result-block.pass { background: var(--correct); }
+  #result-block.fail { background: var(--incorrect); }
+  #result-block .big-percent {
+    font-family: Cambria, Georgia, serif;
+    font-size: 2.4em;
+    font-weight: bold;
+  }
+
+  #error-block {
+    display: none;
+    margin-top: 16px;
+    padding: 12px 14px;
+    background: #fbe9e7;
+    color: var(--incorrect);
+    border-radius: 8px;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1 id="page-title">Домашнее задание</h1>
+  <p id="page-subtitle">Заполни ответы и нажми "Отправить" — результат придёт сразу</p>
+</header>
+
+<main>
+  <div id="student-name-block">
+    <label for="student-name">Имя и фамилия</label>
+    <input type="text" id="student-name" placeholder="например: Алия Нурланова">
+  </div>
+
+  <div id="questions-container"></div>
+
+  <button id="submit-btn">Отправить на проверку</button>
+
+  <div id="error-block"></div>
+
+  <div id="result-block">
+    <div class="big-percent" id="result-percent"></div>
+    <div id="result-text"></div>
+  </div>
+</main>
+
+<script>
+/* =========================================================================
+   НАСТРОЙКИ ЭТОЙ НЕДЕЛИ — единственное, что обычно нужно менять каждый раз.
+   Правильные ответы сюда НЕ вписываются — они хранятся только на сервере,
+   на листе AnswerKey, и сверяются там же.
+   ========================================================================= */
+
+const CONFIG = {
+  // URL веб-приложения Apps Script после деплоя (Deploy → New deployment → Web app)
+  SCRIPT_URL: "https://script.google.com/macros/s/AKfycbz7CnzOs39aO8jTRa7C7Zdp3thOrDvQEDNV88QE0bV4obvLcWDFYp6AuIFd4sqd4Rs/exec",
+
+  // Должен совпадать с WeekID в листе AnswerKey для этой недели
+  WEEK_ID: "week-01",
+
+  PAGE_TITLE: "ДЗ — Неделя 1: Линейные уравнения",
+  PAGE_SUBTITLE: "Заполни ответы и нажми «Отправить» — результат придёт сразу"
+};
+
+// Список вопросов ЭТОЙ недели. type: "numeric" | "text" | "mc"
+// Для "mc" указываешь choices — варианты, которые увидит ученик.
+// id должен совпадать с QuestionID в листе AnswerKey.
+const QUESTIONS = [
+  {
+    id: "q1",
+    type: "numeric",
+    title: "1) Реши уравнение: 3x + 5 = 20. Чему равен x?"
+  },
+  {
+    id: "q2",
+    type: "text",
+    title: "2) Упрости выражение: 2(x + 3) − x. Запиши в виде «x+6»"
+  },
+  {
+    id: "q3",
+    type: "mc",
+    title: "3) Какое из уравнений не имеет решений?",
+    choices: [
+      { value: "a", label: "a) x + 1 = x + 1" },
+      { value: "b", label: "b) x + 1 = x + 2" },
+      { value: "c", label: "c) 2x = 4" }
+    ]
+  }
+];
+
+/* ========================================================================= */
+
+document.getElementById('page-title').textContent = CONFIG.PAGE_TITLE;
+document.getElementById('page-subtitle').textContent = CONFIG.PAGE_SUBTITLE;
+
+const container = document.getElementById('questions-container');
+
+QUESTIONS.forEach(function (q) {
+  const card = document.createElement('div');
+  card.className = 'question-card';
+  card.id = 'card-' + q.id;
+
+  const title = document.createElement('div');
+  title.className = 'q-title';
+  title.textContent = q.title;
+  card.appendChild(title);
+
+  if (q.type === 'mc') {
+    const optionsWrap = document.createElement('div');
+    optionsWrap.className = 'mc-options';
+    q.choices.forEach(function (choice) {
+      const label = document.createElement('label');
+      const input = document.createElement('input');
+      input.type = 'radio';
+      input.name = q.id;
+      input.value = choice.value;
+      label.appendChild(input);
+      label.appendChild(document.createTextNode(choice.label));
+      optionsWrap.appendChild(label);
+    });
+    card.appendChild(optionsWrap);
+  } else {
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.id = 'input-' + q.id;
+    input.placeholder = q.type === 'numeric' ? 'Введи число' : 'Введи ответ';
+    card.appendChild(input);
+  }
+
+  const feedbackLine = document.createElement('div');
+  feedbackLine.className = 'feedback-line';
+  feedbackLine.id = 'feedback-' + q.id;
+  card.appendChild(feedbackLine);
+
+  container.appendChild(card);
+});
+
+function collectAnswers() {
+  const answers = {};
+  QUESTIONS.forEach(function (q) {
+    if (q.type === 'mc') {
+      const checked = document.querySelector('input[name="' + q.id + '"]:checked');
+      answers[q.id] = checked ? checked.value : '';
+    } else {
+      const el = document.getElementById('input-' + q.id);
+      answers[q.id] = el ? el.value : '';
+    }
+  });
+  return answers;
+}
+
+function showError(message) {
+  const errBlock = document.getElementById('error-block');
+  errBlock.textContent = message;
+  errBlock.style.display = 'block';
+}
+
+function clearError() {
+  document.getElementById('error-block').style.display = 'none';
+}
+
+document.getElementById('submit-btn').addEventListener('click', function () {
+  clearError();
+
+  const studentName = document.getElementById('student-name').value.trim();
+  if (!studentName) {
+    showError('Впиши, пожалуйста, имя и фамилию перед отправкой.');
+    return;
+  }
+
+  const answers = collectAnswers();
+  const btn = document.getElementById('submit-btn');
+  btn.disabled = true;
+  btn.textContent = 'Проверяю...';
+
+  fetch(CONFIG.SCRIPT_URL, {
+    method: 'POST',
+    // ВАЖНО: text/plain, а не application/json — это убирает preflight
+    // OPTIONS-запрос, который Apps Script Web App по умолчанию не обрабатывает.
+    // Тело всё равно нормальный JSON, сервер сам его парсит.
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify({
+      studentName: studentName,
+      weekId: CONFIG.WEEK_ID,
+      answers: answers
+    })
+  })
+    .then(function (res) { return res.json(); })
+    .then(function (data) {
+      btn.disabled = false;
+      btn.textContent = 'Отправить на проверку';
+
+      if (data.error) {
+        showError('Ошибка: ' + data.error);
+        return;
+      }
+
+      // Разбор ошибок по каждому вопросу
+      Object.keys(data.feedback).forEach(function (qId) {
+        const fb = data.feedback[qId];
+        const line = document.getElementById('feedback-' + qId);
+        if (!line) return;
+        if (fb.correct) {
+          line.textContent = 'Верно';
+          line.className = 'feedback-line correct';
+        } else {
+          line.textContent = 'Неверно' + (fb.hint ? ' — ' + fb.hint : '');
+          line.className = 'feedback-line incorrect';
+        }
+      });
+
+      const resultBlock = document.getElementById('result-block');
+      resultBlock.style.display = 'block';
+      resultBlock.className = data.passed ? 'pass' : 'fail';
+      document.getElementById('result-percent').textContent = data.percent + '%';
+      document.getElementById('result-text').textContent =
+        data.earned + ' из ' + data.possible + ' баллов' +
+        (data.passed ? ' — задание засчитано' : ' — нужно 80%, попробуй ещё раз позже');
+
+      resultBlock.scrollIntoView({ behavior: 'smooth' });
+    })
+    .catch(function (err) {
+      btn.disabled = false;
+      btn.textContent = 'Отправить на проверку';
+      showError('Не получилось отправить. Проверь интернет и попробуй ещё раз. (' + err.message + ')');
+    });
+});
+</script>
+
+</body>
+</html>
