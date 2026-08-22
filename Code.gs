@@ -16,6 +16,10 @@
  *  - After every submission, regenerates a per-week report sheet named
  *    "Report - <weekId>" and a "Term Overview" sheet (with a class-average
  *    trend chart) across all weeks.
+ *  - Reports only recompute when a student submits — they do NOT auto-update
+ *    if you manually edit/delete rows in Responses. Use the "HW Checker" menu
+ *    (Refresh all reports) after manual edits, or reopen the sheet first if
+ *    the menu isn't there yet.
  *
  * One-time setup:
  *  1. Create a Google Sheet with two sheets: "AnswerKey" and "Responses"
@@ -548,4 +552,30 @@ function updateTermOverview() {
   }
 
   sheet.autoResizeColumns(1, 4);
+}
+
+/**
+ * Adds the "HW Checker" menu when the spreadsheet is opened. Simple trigger —
+ * runs automatically, no deployment or extra authorization needed. If you
+ * just added this function, reopen the spreadsheet once for the menu to show up.
+ */
+function onOpen() {
+  SpreadsheetApp.getUi()
+    .createMenu('HW Checker')
+    .addItem('Refresh all reports', 'refreshAllReports')
+    .addToUi();
+}
+
+/**
+ * Recomputes every "Report - <weekId>" sheet and "Term Overview" from the
+ * Responses sheet's current contents. Run this after manually editing or
+ * deleting rows in Responses — reports don't auto-update on manual edits,
+ * only when a student submits.
+ */
+function refreshAllReports() {
+  const weekIds = getAllWeekIds();
+  weekIds.forEach(function (weekId) { updateReport(weekId); });
+  updateTermOverview();
+
+  SpreadsheetApp.getUi().alert('Reports refreshed for ' + weekIds.length + ' week(s).');
 }

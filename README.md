@@ -81,6 +81,15 @@ yourself, and you shouldn't hand-edit them since they get overwritten.
 submission, with one row per week (students attempted, class average,
 passed) and a line chart of the class average trend — don't hand-edit it.
 
+**Reports only recompute on a real submission.** If you manually edit or
+delete rows in `Responses` (e.g. clearing out test data), the `Report -`
+and `Term Overview` sheets won't reflect that until either the next student
+submits, or you use **HW Checker → Refresh all reports** in the spreadsheet's
+menu bar (appears next to Help once `Code.gs` is saved — reopen the sheet if
+you don't see it yet). The first time you use it, Google will ask you to
+authorize the script again — that's normal, approve it the same way as the
+original deployment.
+
 ### Step 2 — connect Apps Script
 In that same spreadsheet: **Extensions → Apps Script**. Delete the default
 content, paste in the whole `Code.gs` file. Save (the floppy-disk icon).
