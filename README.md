@@ -17,11 +17,20 @@ On top of that:
 - **Hints stay locked for the first two attempts.** A wrong answer only gets
   a hint once a student has reached their 3rd attempt on that week and is
   still below the 80% pass floor.
+- **Full worked solutions unlock once a student passes** — a "why" for every
+  question, not just the ones they got wrong.
 - **Every submission is logged as a separate attempt**, so a student can
-  retry as many times as they like.
+  retry as many times as they like — with a short cooldown between
+  resubmissions so it stays "think, then answer" rather than guess-spam.
+- **Weekly pass streaks** are tracked and shown back to the student.
 - **A live class report** ("Report - <weekId>") is rebuilt automatically
   after every submission for that week, showing the class average, how many
   students passed, and which questions the class is struggling with.
+- **A Term Overview sheet with a trend chart** tracks the class average
+  across every week, so you can see topic drift over the term at a glance.
+- **You get emailed** if a student is still stuck after several attempts.
+- Math renders properly (KaTeX) and multiple-choice option order is
+  shuffled per student, straight in the page itself.
 
 ## 1. One-time setup (~20–30 minutes)
 
@@ -31,12 +40,12 @@ two sheets:
 
 **`AnswerKey` sheet** (the answer key, students never see it) — headers in row 1:
 
-| WeekID | QuestionID | Type | CorrectAnswer | Tolerance | Points | Hint |
-|---|---|---|---|---|---|---|
-| week-01 | q1 | numeric | 2.5 | 0.01 | 1 | Use the quadratic formula with a=2, b=−3, c=−5, then pick the positive root. |
-| week-01 | q2 | text | 6x-4\|-4+6x | | 1 | Differentiate term by term: 6x, −4, 0. |
-| week-01 | q3 | mc | b | | 1 | (2x³)² = 2² × (x³)² = 4x⁶. |
-| week-01 | q4 | numeric | 4 | 0 | 1 | Add the two equations to eliminate y. |
+| WeekID | QuestionID | Type | CorrectAnswer | Tolerance | Points | Hint | Solution |
+|---|---|---|---|---|---|---|---|
+| week-01 | q1 | numeric | 2.5 | 0.01 | 1 | Use the quadratic formula with $a=2, b=-3, c=-5$, then pick the positive root. | $x = \dfrac{3 \pm \sqrt{9+40}}{4}$, so $x=2.5$ or $x=-1$. The positive root is $x=2.5$. |
+| week-01 | q2 | text | 6x-4\|-4+6x | | 1 | Differentiate term by term: $6x$, $-4$, $0$. | $\dfrac{dy}{dx} = 6x - 4$. |
+| week-01 | q3 | mc | b | | 1 | $(2x^3)^2 = 2^2 \times (x^3)^2 = 4x^6$. | $(2x^3)^2 = 4x^6$, so the answer is (b). |
+| week-01 | q4 | numeric | 4 | 0 | 1 | Add the two equations to eliminate $y$. | Adding: $(2x+y)+(x-y)=11+1 \Rightarrow 3x=12 \Rightarrow x=4$. |
 
 Column notes:
 - **Type**: `numeric` (a number, checked against `Tolerance`), `text` (a
@@ -48,6 +57,14 @@ Column notes:
   0.01 if the question involves decimals).
 - **Hint**: a short hint the student sees once hints unlock for that
   question on that attempt (see below) — this is the "error breakdown".
+- **Solution**: the full worked solution, shown for every question once the
+  student passes. Both `Hint` and `Solution` can contain `$...$` LaTeX — the
+  page renders it with KaTeX.
+- **Watch out for Sheets auto-converting decimals to dates.** Typing `2.5`
+  into `CorrectAnswer`/`Tolerance` can silently become a date like `02.05.2026`
+  depending on your locale. If a numeric question always grades wrong, select
+  those columns and set **Format → Number → Plain text** first, then re-type
+  the value.
 
 **`Responses` sheet** (submission log, filled in automatically) — headers:
 
@@ -60,18 +77,26 @@ student submits for that week (e.g. `Report - week-01`) and are fully
 rebuilt after every later submission for that week — you don't create these
 yourself, and you shouldn't hand-edit them since they get overwritten.
 
+**`Term Overview` sheet** is likewise auto-created/rebuilt after every
+submission, with one row per week (students attempted, class average,
+passed) and a line chart of the class average trend — don't hand-edit it.
+
 ### Step 2 — connect Apps Script
 In that same spreadsheet: **Extensions → Apps Script**. Delete the default
 content, paste in the whole `Code.gs` file. Save (the floppy-disk icon).
 
-### Step 3 — deploy as a web app
+### Step 3 — set your email and deploy as a web app
+Near the top of `Code.gs`, set `TEACHER_EMAIL` to the address that should get
+"a student is stuck" alerts.
+
 **Deploy → New deployment** → type **Web app**.
 - Execute as: **Me**
 - Who has access: **Anyone**
 
 Click Deploy, approve access (Google will ask about permissions on the
-sheet — normal, the script needs to read/write it). Copy the **web app
-URL** — you'll need it in the HTML template.
+sheet **and** on sending email as you — both normal, the script needs them
+to grade and to send stuck-student alerts). Copy the **web app URL** —
+you'll need it in the HTML template.
 
 ### Step 4 — put the URL in the HTML
 Open `weekly-hw-template.html`, and in the `CONFIG` block paste the copied
@@ -99,6 +124,18 @@ URL into `SCRIPT_URL`.
 - Once a student reaches 80% they've passed — no hints are shown or needed.
 - The attempt count is per student name (case-insensitive, trimmed) and per
   `WeekID`, so make sure students spell their name consistently.
+- **Resubmissions are rate-limited** to one every `RESUBMIT_COOLDOWN_SECONDS`
+  (20s by default) per student per week, so a countdown appears instead of
+  letting someone spam-guess. This is enforced on the server, not just the
+  page, so it can't be bypassed by refreshing.
+- **Passing unlocks the full worked solution** for every question (not just
+  the ones answered wrong) — a "why", not just a hint, once mastery is shown.
+- **Weekly pass streaks**: passing this week and every week before it (back
+  to the first `WeekID` with no gap) builds a streak, shown to the student
+  as "🔥 N-week pass streak!" once N ≥ 2.
+- **You get an email** (to `TEACHER_EMAIL` in `Code.gs`) the moment a student
+  reaches `STUCK_ALERT_ATTEMPT` (5 by default) attempts on a week and still
+  hasn't passed — a nudge to step in before they give up.
 
 ## 4. Reading the class report
 
@@ -116,7 +153,15 @@ down, and neither do earlier ones). It shows:
 - **Student results**: each student's best score, how many attempts they
   used, and whether they passed — a quick way to see who still needs help.
 
-## 5. How to distribute the file to students
+## 5. Tracking the whole term
+
+The `Term Overview` sheet rebuilds after every submission with one row per
+week (`Week | Students | Class Average % | Passed`) across every `WeekID`
+that's been attempted so far, plus a line chart of the class average over
+time — open it any time to see whether the class is trending up or down,
+without stitching together each week's `Report -` sheet by hand.
+
+## 6. How to distribute the file to students
 
 Opening the HTML directly as a local file sometimes blocks submission
 because of browser restrictions on `file://`. The reliable option is free
@@ -125,7 +170,7 @@ settings) or Google Sites (embed the HTML). If Claude Code is set up to
 deploy for you, you can ask it to stand up GitHub Pages for this repo — a
 five-minute one-time setup.
 
-## 6. Limitations worth knowing
+## 7. Limitations worth knowing
 
 - **The `text` answer type is an exact (character-for-character, ignoring
   spaces/case) string match**, not a check for mathematical equivalence. If
@@ -136,9 +181,19 @@ five-minute one-time setup.
   more involved feature.
 - This system protects against faking a result via DevTools/console (the
   server is the only source of truth), but not against a student asking a
-  classmate or another AI for the answer and honestly typing it in. That's
-  no longer a technical problem but a question of task design (e.g. make
-  some questions unlikely to have a ready-made answer online).
+  classmate or another AI for the answer and honestly typing it in. Shuffling
+  multiple-choice order and adding a resubmission cooldown make casual
+  guessing/copying harder, but sharing a final numeric answer is still a
+  question of task design (e.g. make some questions unlikely to have a
+  ready-made answer online), not something the system can fully block.
+- Multiple-choice order is reshuffled **on page load**, not per-submission —
+  a student who reloads gets a new shuffle, but it stays fixed for that one
+  sitting.
+- KaTeX loads from a CDN (`cdn.jsdelivr.net`); if a student's network blocks
+  that domain, math falls back to showing the raw `$...$` text instead of
+  rendering.
 - Google Apps Script's free quotas comfortably cover a class or several
   classes a week — this isn't built for a whole school at scale, but it's
-  more than enough for typical classroom use.
+  more than enough for typical classroom use. `MailApp` alerts count against
+  your daily email quota too (well within range for classroom-size stuck
+  alerts).

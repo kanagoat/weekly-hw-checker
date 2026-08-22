@@ -8,9 +8,14 @@
  *    score and a per-question breakdown.
  *  - Hints for wrong answers only unlock once a student has reached
  *    ATTEMPTS_BEFORE_HINTS attempts and is still below PASS_THRESHOLD_PERCENT.
+ *  - Full worked solutions are unlocked once a student passes.
+ *  - Tracks a weekly pass streak per student.
+ *  - Enforces a short cooldown between resubmissions to discourage guess-spam.
+ *  - Emails the teacher once a student is still stuck after STUCK_ALERT_ATTEMPT
+ *    attempts.
  *  - After every submission, regenerates a per-week report sheet named
- *    "Report - <weekId>" with the class average, pass count, per-question
- *    trend breakdown, and each student's best attempt.
+ *    "Report - <weekId>" and a "Term Overview" sheet (with a class-average
+ *    trend chart) across all weeks.
  *
  * One-time setup:
  *  1. Create a Google Sheet with two sheets: "AnswerKey" and "Responses"
@@ -20,6 +25,7 @@
  *       Execute as: Me
  *       Who has access: Anyone
  *  4. Copy the web app URL into CONFIG.SCRIPT_URL in weekly-hw-template.html.
+ *  5. Set TEACHER_EMAIL below to where "student is stuck" alerts should go.
  *
  * Each week you only need to add new rows to AnswerKey (a new WeekID) —
  * this file does not need to change.
@@ -29,6 +35,9 @@ const ANSWER_KEY_SHEET = 'AnswerKey';
 const RESPONSES_SHEET = 'Responses';
 const PASS_THRESHOLD_PERCENT = 80;
 const ATTEMPTS_BEFORE_HINTS = 3;
+const RESUBMIT_COOLDOWN_SECONDS = 20;
+const STUCK_ALERT_ATTEMPT = 5;
+const TEACHER_EMAIL = 'kana.goat@gmail.com';
 
 function doPost(e) {
   try {
@@ -46,6 +55,14 @@ function doPost(e) {
       return jsonResponse({ error: 'No answer key found for weekId: ' + weekId });
     }
 
+    const secondsSince = secondsSinceLastAttempt(studentName, weekId);
+    if (secondsSince < RESUBMIT_COOLDOWN_SECONDS) {
+      return jsonResponse({
+        error: 'cooldown',
+        cooldownSecondsRemaining: Math.ceil(RESUBMIT_COOLDOWN_SECONDS - secondsSince)
+      });
+    }
+
     const attempt = countPreviousAttempts(studentName, weekId) + 1;
 
     let earned = 0;
@@ -61,7 +78,7 @@ function doPost(e) {
         : '';
       const isCorrect = checkAnswer(studentAnswer, k);
       if (isCorrect) earned += k.points;
-      graded[qId] = { correct: isCorrect, hint: k.hint || '' };
+      graded[qId] = { correct: isCorrect, hint: k.hint || '', solution: k.solution || '' };
     });
 
     const percent = possible > 0 ? Math.round((earned / possible) * 1000) / 10 : 0;
@@ -69,16 +86,26 @@ function doPost(e) {
     const hintsUnlocked = !passed && attempt >= ATTEMPTS_BEFORE_HINTS;
 
     const feedback = {};
+    const solutions = {};
     Object.keys(graded).forEach(function (qId) {
       const g = graded[qId];
       feedback[qId] = {
         correct: g.correct,
         hint: (!g.correct && hintsUnlocked) ? g.hint : ''
       };
+      if (passed) solutions[qId] = g.solution;
     });
 
     logResponse(studentName, weekId, attempt, earned, possible, percent, passed, answers, feedback);
+
+    if (!passed && attempt === STUCK_ALERT_ATTEMPT) {
+      notifyTeacherStuckStudent(studentName, weekId, attempt, percent);
+    }
+
+    const streak = computeStreak(studentName, weekId, passed);
+
     updateReport(weekId);
+    updateTermOverview();
 
     return jsonResponse({
       studentName: studentName,
@@ -91,7 +118,9 @@ function doPost(e) {
       percent: percent,
       passed: passed,
       hintsUnlocked: hintsUnlocked,
-      feedback: feedback
+      streak: streak,
+      feedback: feedback,
+      solutions: solutions
     });
   } catch (err) {
     return jsonResponse({ error: 'Server error: ' + err.message });
@@ -110,7 +139,7 @@ function jsonResponse(obj) {
 
 /**
  * Reads the AnswerKey sheet and returns the key for one week only:
- * { questionId: { type, correct: [...accepted answers...], tolerance, points, hint } }
+ * { questionId: { type, correct: [...accepted answers...], tolerance, points, hint, solution } }
  */
 function loadAnswerKey(weekId) {
   const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(ANSWER_KEY_SHEET);
@@ -124,7 +153,8 @@ function loadAnswerKey(weekId) {
     correctAnswer: headers.indexOf('CorrectAnswer'),
     tolerance: headers.indexOf('Tolerance'),
     points: headers.indexOf('Points'),
-    hint: headers.indexOf('Hint')
+    hint: headers.indexOf('Hint'),
+    solution: headers.indexOf('Solution')
   };
 
   const key = {};
@@ -141,7 +171,8 @@ function loadAnswerKey(weekId) {
       correct: correctRaw.split('|').map(function (s) { return s.trim(); }),
       tolerance: row[idx.tolerance] === '' ? 0 : Number(row[idx.tolerance]),
       points: row[idx.points] === '' ? 1 : Number(row[idx.points]),
-      hint: idx.hint >= 0 ? String(row[idx.hint] || '') : ''
+      hint: idx.hint >= 0 ? String(row[idx.hint] || '') : '',
+      solution: idx.solution >= 0 ? String(row[idx.solution] || '') : ''
     };
   }
   return key;
@@ -190,6 +221,97 @@ function countPreviousAttempts(studentName, weekId) {
     }
   }
   return count;
+}
+
+/** Seconds since this student's last submission for this week (Infinity if none yet). */
+function secondsSinceLastAttempt(studentName, weekId) {
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(RESPONSES_SHEET);
+  const rows = sheet.getDataRange().getValues();
+  const headers = rows[0];
+  const idx = {
+    studentName: headers.indexOf('StudentName'),
+    weekId: headers.indexOf('WeekID'),
+    timestamp: headers.indexOf('Timestamp')
+  };
+  const normalizedName = studentName.trim().toLowerCase();
+
+  let lastTime = null;
+  for (let i = 1; i < rows.length; i++) {
+    const row = rows[i];
+    if (String(row[idx.weekId]).trim() === weekId &&
+        String(row[idx.studentName]).trim().toLowerCase() === normalizedName) {
+      const t = new Date(row[idx.timestamp]).getTime();
+      if (lastTime === null || t > lastTime) lastTime = t;
+    }
+  }
+  if (lastTime === null) return Infinity;
+  return (Date.now() - lastTime) / 1000;
+}
+
+/** Distinct WeekIDs that exist in AnswerKey, sorted chronologically (by WeekID string). */
+function getAllWeekIds() {
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(ANSWER_KEY_SHEET);
+  const rows = sheet.getDataRange().getValues();
+  const headers = rows[0];
+  const weekIdx = headers.indexOf('WeekID');
+  const set = {};
+  for (let i = 1; i < rows.length; i++) {
+    const wk = String(rows[i][weekIdx]).trim();
+    if (wk) set[wk] = true;
+  }
+  return Object.keys(set).sort();
+}
+
+/**
+ * Number of consecutive weeks (ending at weekId) this student has passed.
+ * 0 if this attempt did not pass.
+ */
+function computeStreak(studentName, weekId, passedThisAttempt) {
+  if (!passedThisAttempt) return 0;
+
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(RESPONSES_SHEET);
+  const rows = sheet.getDataRange().getValues();
+  const headers = rows[0];
+  const idx = {
+    studentName: headers.indexOf('StudentName'),
+    weekId: headers.indexOf('WeekID'),
+    passed: headers.indexOf('Passed')
+  };
+  const normalizedName = studentName.trim().toLowerCase();
+
+  const passedWeeks = {};
+  for (let i = 1; i < rows.length; i++) {
+    const row = rows[i];
+    if (String(row[idx.studentName]).trim().toLowerCase() === normalizedName &&
+        (row[idx.passed] === true || row[idx.passed] === 'TRUE')) {
+      passedWeeks[String(row[idx.weekId]).trim()] = true;
+    }
+  }
+  passedWeeks[weekId] = true;
+
+  const sortedWeeks = getAllWeekIds();
+  const currentIndex = sortedWeeks.indexOf(weekId);
+
+  let streak = 0;
+  for (let i = currentIndex; i >= 0; i--) {
+    if (passedWeeks[sortedWeeks[i]]) streak++;
+    else break;
+  }
+  return streak;
+}
+
+function notifyTeacherStuckStudent(studentName, weekId, attempt, percent) {
+  try {
+    MailApp.sendEmail({
+      to: TEACHER_EMAIL,
+      subject: 'HW Checker: ' + studentName + ' is stuck on ' + weekId,
+      body: studentName + ' has submitted ' + attempt + ' attempts on ' + weekId +
+        ' and is still at ' + percent + '% (needs ' + PASS_THRESHOLD_PERCENT + '%).\n\n' +
+        'They might need some extra help with this week\'s material.'
+    });
+  } catch (err) {
+    // Don't let a mail failure break grading.
+  }
 }
 
 function logResponse(studentName, weekId, attempt, earned, possible, percent, passed, answers, feedback) {
@@ -347,4 +469,83 @@ function updateReport(weekId) {
   });
 
   report.autoResizeColumns(1, 6);
+}
+
+/**
+ * Rebuilds the "Term Overview" sheet: one row per week that has been
+ * attempted (class average and pass count from each student's best
+ * attempt that week), plus a line chart of the class average over time.
+ */
+function updateTermOverview() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const responsesSheet = ss.getSheetByName(RESPONSES_SHEET);
+  const rows = responsesSheet.getDataRange().getValues();
+  const headers = rows[0];
+  const idx = {
+    studentName: headers.indexOf('StudentName'),
+    weekId: headers.indexOf('WeekID'),
+    percent: headers.indexOf('Percent'),
+    earned: headers.indexOf('Earned'),
+    passed: headers.indexOf('Passed')
+  };
+
+  const weekData = {};
+  for (let i = 1; i < rows.length; i++) {
+    const row = rows[i];
+    const wk = String(row[idx.weekId]).trim();
+    if (!wk) continue;
+    const name = String(row[idx.studentName]).trim().toLowerCase();
+    const percent = Number(row[idx.percent]);
+    const earned = Number(row[idx.earned]);
+    const passedVal = row[idx.passed];
+
+    if (!weekData[wk]) weekData[wk] = {};
+    const existing = weekData[wk][name];
+    if (!existing || percent > existing.percent ||
+        (percent === existing.percent && earned > existing.earned)) {
+      weekData[wk][name] = { percent: percent, passed: (passedVal === true || passedVal === 'TRUE') };
+    }
+  }
+
+  const weekIds = Object.keys(weekData).sort();
+  const summary = weekIds.map(function (wk) {
+    const students = Object.keys(weekData[wk]).map(function (k) { return weekData[wk][k]; });
+    const count = students.length;
+    const avg = count > 0
+      ? Math.round((students.reduce(function (s, x) { return s + x.percent; }, 0) / count) * 10) / 10
+      : 0;
+    const passCount = students.filter(function (x) { return x.passed; }).length;
+    return { weekId: wk, students: count, average: avg, passed: passCount };
+  });
+
+  const sheetName = 'Term Overview';
+  let sheet = ss.getSheetByName(sheetName);
+  if (!sheet) {
+    sheet = ss.insertSheet(sheetName);
+  } else {
+    sheet.getCharts().forEach(function (chart) { sheet.removeChart(chart); });
+    sheet.clear();
+  }
+
+  sheet.getRange(1, 1, 1, 4).setValues([['Week', 'Students', 'Class Average %', 'Passed']]);
+  sheet.getRange(1, 1, 1, 4).setFontWeight('bold');
+
+  if (summary.length > 0) {
+    const dataRows = summary.map(function (s) { return [s.weekId, s.students, s.average, s.passed]; });
+    sheet.getRange(2, 1, dataRows.length, 4).setValues(dataRows);
+
+    const chart = sheet.newChart()
+      .setChartType(Charts.ChartType.LINE)
+      .addRange(sheet.getRange(2, 1, summary.length, 1))
+      .addRange(sheet.getRange(2, 3, summary.length, 1))
+      .setPosition(2, 6, 0, 0)
+      .setOption('title', 'Class Average Over Time')
+      .setOption('legend', { position: 'none' })
+      .setOption('vAxis', { title: 'Average %', minValue: 0, maxValue: 100 })
+      .setOption('hAxis', { title: 'Week' })
+      .build();
+    sheet.insertChart(chart);
+  }
+
+  sheet.autoResizeColumns(1, 4);
 }

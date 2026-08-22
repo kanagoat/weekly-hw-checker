@@ -4,6 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Homework</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
 <style>
   :root {
     --teal: #1f6f6b;
@@ -15,6 +18,7 @@
     --correct: #1f8a52;
     --incorrect: #b3392c;
     --muted: #6b7280;
+    --gold: #b8860b;
   }
   * { box-sizing: border-box; }
   body {
@@ -151,6 +155,36 @@
     font-size: 0.9em;
     opacity: 0.9;
   }
+  #result-block .streak-badge {
+    display: none;
+    margin: 10px auto 0 auto;
+    padding: 6px 14px;
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 999px;
+    font-weight: bold;
+    max-width: max-content;
+  }
+
+  #solutions-block {
+    display: none;
+    margin-top: 16px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px;
+  }
+  #solutions-block h2 {
+    font-family: Cambria, Georgia, serif;
+    font-size: 1.15em;
+    margin: 0 0 12px 0;
+  }
+  .solution-line {
+    padding: 10px 0;
+    border-top: 1px solid var(--border);
+    font-size: 0.95em;
+  }
+  .solution-line:first-of-type { border-top: none; }
+  .solution-line .solution-q { font-weight: bold; color: var(--teal-dark); }
 
   #error-block {
     display: none;
@@ -160,9 +194,31 @@
     color: var(--incorrect);
     border-radius: 8px;
   }
+  #cooldown-block {
+    display: none;
+    margin-top: 16px;
+    padding: 12px 14px;
+    background: #fff4e0;
+    color: var(--gold);
+    border-radius: 8px;
+    text-align: center;
+    font-weight: bold;
+  }
+
+  #confetti-canvas {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 999;
+  }
 </style>
 </head>
 <body>
+
+<canvas id="confetti-canvas"></canvas>
 
 <header>
   <h1 id="page-title">Homework</h1>
@@ -180,11 +236,18 @@
   <button id="submit-btn">Submit for checking</button>
 
   <div id="error-block"></div>
+  <div id="cooldown-block"></div>
 
   <div id="result-block">
     <div class="big-percent" id="result-percent"></div>
     <div id="result-text"></div>
     <div class="attempt-note" id="result-attempt-note"></div>
+    <div class="streak-badge" id="streak-badge"></div>
+  </div>
+
+  <div id="solutions-block">
+    <h2>📘 Full worked solutions</h2>
+    <div id="solutions-container"></div>
   </div>
 </main>
 
@@ -193,6 +256,7 @@
    THIS WEEK'S SETTINGS — usually the only thing you need to change each week.
    Correct answers are NOT written here — they live only on the server, in
    the AnswerKey sheet, and are checked there.
+   Wrap any math in $...$ (e.g. "$2x^2-3x-5=0$") — it renders with KaTeX.
    ========================================================================= */
 
 const CONFIG = {
@@ -207,33 +271,34 @@ const CONFIG = {
 };
 
 // This week's questions. type: "numeric" | "text" | "mc"
-// For "mc", give `choices` — the options the student will see.
+// For "mc", give `choices` — the options the student will see (their order
+// is shuffled on load, so `value` is what's graded, not position).
 // id must match the QuestionID in the AnswerKey sheet.
 const QUESTIONS = [
   {
     id: "q1",
     type: "numeric",
-    title: "1) Solve 2x² − 3x − 5 = 0. Give the positive root as a decimal."
+    title: "1) Solve $2x^2 - 3x - 5 = 0$. Give the positive root as a decimal."
   },
   {
     id: "q2",
     type: "text",
-    title: "2) Differentiate y = 3x² − 4x + 7 with respect to x. Give dy/dx in the form ax + b."
+    title: "2) Differentiate $y = 3x^2 - 4x + 7$ with respect to $x$. Give $\\dfrac{dy}{dx}$ in the form $ax + b$."
   },
   {
     id: "q3",
     type: "mc",
-    title: "3) Which expression is equivalent to (2x³)²?",
+    title: "3) Which expression is equivalent to $(2x^3)^2$?",
     choices: [
-      { value: "a", label: "a) 4x⁵" },
-      { value: "b", label: "b) 4x⁶" },
-      { value: "c", label: "c) 2x⁶" }
+      { value: "a", label: "$4x^5$" },
+      { value: "b", label: "$4x^6$" },
+      { value: "c", label: "$2x^6$" }
     ]
   },
   {
     id: "q4",
     type: "numeric",
-    title: "4) Solve simultaneously: 2x + y = 11 and x − y = 1. Find x."
+    title: "4) Solve simultaneously: $2x + y = 11$ and $x - y = 1$. Find $x$."
   }
 ];
 
@@ -241,6 +306,26 @@ const QUESTIONS = [
 
 document.getElementById('page-title').textContent = CONFIG.PAGE_TITLE;
 document.getElementById('page-subtitle').textContent = CONFIG.PAGE_SUBTITLE;
+
+function shuffle(arr) {
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const tmp = a[i]; a[i] = a[j]; a[j] = tmp;
+  }
+  return a;
+}
+
+function renderMath() {
+  if (window.renderMathInElement) {
+    renderMathInElement(document.body, {
+      delimiters: [
+        { left: '$$', right: '$$', display: true },
+        { left: '$', right: '$', display: false }
+      ]
+    });
+  }
+}
 
 const container = document.getElementById('questions-container');
 
@@ -257,14 +342,16 @@ QUESTIONS.forEach(function (q) {
   if (q.type === 'mc') {
     const optionsWrap = document.createElement('div');
     optionsWrap.className = 'mc-options';
-    q.choices.forEach(function (choice) {
+    shuffle(q.choices).forEach(function (choice) {
       const label = document.createElement('label');
       const input = document.createElement('input');
       input.type = 'radio';
       input.name = q.id;
       input.value = choice.value;
       label.appendChild(input);
-      label.appendChild(document.createTextNode(choice.label));
+      const text = document.createElement('span');
+      text.textContent = choice.label;
+      label.appendChild(text);
       optionsWrap.appendChild(label);
     });
     card.appendChild(optionsWrap);
@@ -283,6 +370,8 @@ QUESTIONS.forEach(function (q) {
 
   container.appendChild(card);
 });
+
+renderMath();
 
 function collectAnswers() {
   const answers = {};
@@ -306,6 +395,95 @@ function showError(message) {
 
 function clearError() {
   document.getElementById('error-block').style.display = 'none';
+}
+
+/* ---- lightweight canvas confetti, no external dependency ---- */
+function launchConfetti() {
+  const canvas = document.getElementById('confetti-canvas');
+  const ctx = canvas.getContext('2d');
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+
+  const colors = ['#1f6f6b', '#b8860b', '#1f8a52', '#2b2f33', '#d4af37'];
+  const pieces = [];
+  for (let i = 0; i < 140; i++) {
+    pieces.push({
+      x: Math.random() * canvas.width,
+      y: -20 - Math.random() * canvas.height * 0.5,
+      w: 6 + Math.random() * 6,
+      h: 8 + Math.random() * 8,
+      color: colors[Math.floor(Math.random() * colors.length)],
+      speedY: 2 + Math.random() * 3,
+      speedX: -1.5 + Math.random() * 3,
+      rotation: Math.random() * 360,
+      spin: -6 + Math.random() * 12
+    });
+  }
+
+  let frame = 0;
+  const maxFrames = 150;
+
+  function tick() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    pieces.forEach(function (p) {
+      p.x += p.speedX;
+      p.y += p.speedY;
+      p.rotation += p.spin;
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      ctx.rotate((p.rotation * Math.PI) / 180);
+      ctx.fillStyle = p.color;
+      ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h);
+      ctx.restore();
+    });
+    frame++;
+    if (frame < maxFrames) {
+      requestAnimationFrame(tick);
+    } else {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+    }
+  }
+  tick();
+}
+
+const PASS_MESSAGES_PERFECT = [
+  'Flawless! Every single question, correct.',
+  'Perfect score — that\'s mastery.',
+  '100%. Nothing left to prove this week.'
+];
+const PASS_MESSAGES_GOOD = [
+  'Homework passed — nicely done!',
+  'You crossed the line. Great work.',
+  'Passed! That took real understanding.'
+];
+
+function pickMessage(arr) {
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+
+let cooldownTimer = null;
+
+function startCooldownCountdown(seconds) {
+  const btn = document.getElementById('submit-btn');
+  const cooldownBlock = document.getElementById('cooldown-block');
+  let remaining = seconds;
+  btn.disabled = true;
+
+  if (cooldownTimer) clearInterval(cooldownTimer);
+
+  function update() {
+    cooldownBlock.style.display = 'block';
+    cooldownBlock.textContent = 'Take a moment to double-check your answers — you can resubmit in ' + remaining + 's.';
+    if (remaining <= 0) {
+      clearInterval(cooldownTimer);
+      cooldownBlock.style.display = 'none';
+      btn.disabled = false;
+      btn.textContent = 'Submit for checking';
+    }
+    remaining--;
+  }
+  update();
+  cooldownTimer = setInterval(update, 1000);
 }
 
 document.getElementById('submit-btn').addEventListener('click', function () {
@@ -336,6 +514,12 @@ document.getElementById('submit-btn').addEventListener('click', function () {
   })
     .then(function (res) { return res.json(); })
     .then(function (data) {
+      if (data.error === 'cooldown') {
+        btn.textContent = 'Submit for checking';
+        startCooldownCountdown(data.cooldownSecondsRemaining);
+        return;
+      }
+
       btn.disabled = false;
       btn.textContent = 'Submit for checking';
 
@@ -371,8 +555,9 @@ document.getElementById('submit-btn').addEventListener('click', function () {
       resultBlock.className = data.passed ? 'pass' : 'fail';
       document.getElementById('result-percent').textContent = data.percent + '%';
       document.getElementById('result-text').textContent =
-        data.earned + ' out of ' + data.possible + ' points' +
-        (data.passed ? ' — homework passed!' : ' — you need ' + data.passThreshold + '%, try again');
+        data.earned + ' out of ' + data.possible + ' points — ' +
+        (data.passed ? pickMessage(data.percent === 100 ? PASS_MESSAGES_PERFECT : PASS_MESSAGES_GOOD)
+                     : 'you need ' + data.passThreshold + '%, try again');
 
       const attemptNote = document.getElementById('result-attempt-note');
       if (data.passed) {
@@ -385,6 +570,41 @@ document.getElementById('submit-btn').addEventListener('click', function () {
           data.attemptsBeforeHints + ' if you are still below ' + data.passThreshold + '%' +
           (attemptsLeft > 0 ? ' (' + attemptsLeft + ' more attempt' + (attemptsLeft === 1 ? '' : 's') + ' to go)' : '') + '.';
       }
+
+      const streakBadge = document.getElementById('streak-badge');
+      if (data.passed && data.streak > 1) {
+        streakBadge.style.display = 'block';
+        streakBadge.textContent = '🔥 ' + data.streak + '-week pass streak!';
+      } else {
+        streakBadge.style.display = 'none';
+      }
+
+      const solutionsBlock = document.getElementById('solutions-block');
+      const solutionsContainer = document.getElementById('solutions-container');
+      if (data.passed && data.solutions) {
+        solutionsContainer.innerHTML = '';
+        QUESTIONS.forEach(function (q) {
+          const sol = data.solutions[q.id];
+          if (!sol) return;
+          const line = document.createElement('div');
+          line.className = 'solution-line';
+          const qLabel = document.createElement('div');
+          qLabel.className = 'solution-q';
+          qLabel.textContent = 'Question ' + q.id.replace('q', '');
+          line.appendChild(qLabel);
+          const solText = document.createElement('div');
+          solText.textContent = sol;
+          line.appendChild(solText);
+          solutionsContainer.appendChild(line);
+        });
+        solutionsBlock.style.display = 'block';
+      } else {
+        solutionsBlock.style.display = 'none';
+      }
+
+      renderMath();
+
+      if (data.passed) launchConfetti();
 
       resultBlock.scrollIntoView({ behavior: 'smooth' });
     })
