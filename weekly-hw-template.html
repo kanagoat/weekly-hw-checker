@@ -204,6 +204,11 @@
     text-align: center;
     font-weight: bold;
   }
+  #loading-block {
+    text-align: center;
+    padding: 30px 14px;
+    color: var(--muted);
+  }
 
   #confetti-canvas {
     position: fixed;
@@ -231,9 +236,10 @@
     <input type="text" id="student-name" placeholder="e.g. Alex Morgan">
   </div>
 
+  <div id="loading-block">Loading this week's questions…</div>
   <div id="questions-container"></div>
 
-  <button id="submit-btn">Submit for checking</button>
+  <button id="submit-btn" style="display:none;">Submit for checking</button>
 
   <div id="error-block"></div>
   <div id="cooldown-block"></div>
@@ -253,59 +259,23 @@
 
 <script>
 /* =========================================================================
-   THIS WEEK'S SETTINGS — usually the only thing you need to change each week.
-   Correct answers are NOT written here — they live only on the server, in
-   the AnswerKey sheet, and are checked there.
-   Wrap any math in $...$ (e.g. "$2x^2-3x-5=0$") — it renders with KaTeX.
+   This page is the same file for every week — nothing here needs editing.
+   Which week it shows comes from the URL's "week" parameter, e.g.:
+     weekly-hw-template.html?week=week-01
+   The question text, type, and (for multiple choice) the options themselves
+   are fetched from the AnswerKey sheet at load time. Correct answers, hints,
+   and solutions are never sent to the browser until they're supposed to be.
    ========================================================================= */
 
 const CONFIG = {
   // Apps Script web app URL (Deploy → New deployment → Web app)
-  SCRIPT_URL: "https://script.google.com/macros/s/AKfycbz7CnzOs39aO8jTRa7C7Zdp3thOrDvQEDNV88QE0bV4obvLcWDFYp6AuIFd4sqd4Rs/exec",
-
-  // Must match the WeekID in the AnswerKey sheet for this week
-  WEEK_ID: "week-01",
-
-  PAGE_TITLE: "HW — Week 1: Quadratics, Calculus & Simultaneous Equations",
-  PAGE_SUBTITLE: "Fill in your answers and press “Submit” — you'll get your result right away"
+  SCRIPT_URL: "https://script.google.com/macros/s/AKfycbz7CnzOs39aO8jTRa7C7Zdp3thOrDvQEDNV88QE0bV4obvLcWDFYp6AuIFd4sqd4Rs/exec"
 };
 
-// This week's questions. type: "numeric" | "text" | "mc"
-// For "mc", give `choices` — the options the student will see (their order
-// is shuffled on load, so `value` is what's graded, not position).
-// id must match the QuestionID in the AnswerKey sheet.
-const QUESTIONS = [
-  {
-    id: "q1",
-    type: "numeric",
-    title: "1) Solve $2x^2 - 3x - 5 = 0$. Give the positive root as a decimal."
-  },
-  {
-    id: "q2",
-    type: "text",
-    title: "2) Differentiate $y = 3x^2 - 4x + 7$ with respect to $x$. Give $\\dfrac{dy}{dx}$ in the form $ax + b$."
-  },
-  {
-    id: "q3",
-    type: "mc",
-    title: "3) Which expression is equivalent to $(2x^3)^2$?",
-    choices: [
-      { value: "a", label: "$4x^5$" },
-      { value: "b", label: "$4x^6$" },
-      { value: "c", label: "$2x^6$" }
-    ]
-  },
-  {
-    id: "q4",
-    type: "numeric",
-    title: "4) Solve simultaneously: $2x + y = 11$ and $x - y = 1$. Find $x$."
-  }
-];
+const WEEK_ID = new URLSearchParams(window.location.search).get('week');
 
-/* ========================================================================= */
-
-document.getElementById('page-title').textContent = CONFIG.PAGE_TITLE;
-document.getElementById('page-subtitle').textContent = CONFIG.PAGE_SUBTITLE;
+// Populated once the week's questions have loaded (see loadWeek() below).
+let QUESTIONS = [];
 
 function shuffle(arr) {
   const a = arr.slice();
@@ -327,51 +297,90 @@ function renderMath() {
   }
 }
 
-const container = document.getElementById('questions-container');
+/**
+ * Builds the question cards for one week. `choices` (mc only) is a plain
+ * array of option texts fetched from the server — the option a student
+ * picks is graded by matching its text against AnswerKey's CorrectAnswer,
+ * the same way a "text" answer is, so there's no separate a/b/c code to
+ * keep in sync.
+ */
+function buildQuestionsUI(questions) {
+  const container = document.getElementById('questions-container');
 
-QUESTIONS.forEach(function (q) {
-  const card = document.createElement('div');
-  card.className = 'question-card';
-  card.id = 'card-' + q.id;
+  questions.forEach(function (q) {
+    const card = document.createElement('div');
+    card.className = 'question-card';
+    card.id = 'card-' + q.id;
 
-  const title = document.createElement('div');
-  title.className = 'q-title';
-  title.textContent = q.title;
-  card.appendChild(title);
+    const title = document.createElement('div');
+    title.className = 'q-title';
+    title.textContent = q.title;
+    card.appendChild(title);
 
-  if (q.type === 'mc') {
-    const optionsWrap = document.createElement('div');
-    optionsWrap.className = 'mc-options';
-    shuffle(q.choices).forEach(function (choice) {
-      const label = document.createElement('label');
+    if (q.type === 'mc') {
+      const optionsWrap = document.createElement('div');
+      optionsWrap.className = 'mc-options';
+      shuffle(q.choices || []).forEach(function (choiceText) {
+        const label = document.createElement('label');
+        const input = document.createElement('input');
+        input.type = 'radio';
+        input.name = q.id;
+        input.value = choiceText;
+        label.appendChild(input);
+        const text = document.createElement('span');
+        text.textContent = choiceText;
+        label.appendChild(text);
+        optionsWrap.appendChild(label);
+      });
+      card.appendChild(optionsWrap);
+    } else {
       const input = document.createElement('input');
-      input.type = 'radio';
-      input.name = q.id;
-      input.value = choice.value;
-      label.appendChild(input);
-      const text = document.createElement('span');
-      text.textContent = choice.label;
-      label.appendChild(text);
-      optionsWrap.appendChild(label);
-    });
-    card.appendChild(optionsWrap);
-  } else {
-    const input = document.createElement('input');
-    input.type = 'text';
-    input.id = 'input-' + q.id;
-    input.placeholder = q.type === 'numeric' ? 'Enter a number' : 'Enter your answer';
-    card.appendChild(input);
+      input.type = 'text';
+      input.id = 'input-' + q.id;
+      input.placeholder = q.type === 'numeric' ? 'Enter a number' : 'Enter your answer';
+      card.appendChild(input);
+    }
+
+    const feedbackLine = document.createElement('div');
+    feedbackLine.className = 'feedback-line';
+    feedbackLine.id = 'feedback-' + q.id;
+    card.appendChild(feedbackLine);
+
+    container.appendChild(card);
+  });
+}
+
+/** Fetches this week's question list from the server and renders the page. */
+function loadWeek() {
+  const loadingBlock = document.getElementById('loading-block');
+
+  if (!WEEK_ID) {
+    loadingBlock.style.display = 'none';
+    showError('No week specified. Open this page with ?week=week-01 (matching a WeekID in your AnswerKey sheet) added to the URL.');
+    return;
   }
 
-  const feedbackLine = document.createElement('div');
-  feedbackLine.className = 'feedback-line';
-  feedbackLine.id = 'feedback-' + q.id;
-  card.appendChild(feedbackLine);
+  fetch(CONFIG.SCRIPT_URL + '?week=' + encodeURIComponent(WEEK_ID))
+    .then(function (res) { return res.json(); })
+    .then(function (data) {
+      loadingBlock.style.display = 'none';
 
-  container.appendChild(card);
-});
+      if (data.error) {
+        showError('Could not load this week\'s homework: ' + data.error);
+        return;
+      }
 
-renderMath();
+      document.getElementById('page-title').textContent = data.title || 'Homework';
+      QUESTIONS = data.questions || [];
+      buildQuestionsUI(QUESTIONS);
+      renderMath();
+      document.getElementById('submit-btn').style.display = 'block';
+    })
+    .catch(function (err) {
+      loadingBlock.style.display = 'none';
+      showError('Could not load this week\'s homework. Check your connection and try again. (' + err.message + ')');
+    });
+}
 
 function collectAnswers() {
   const answers = {};
@@ -508,7 +517,7 @@ document.getElementById('submit-btn').addEventListener('click', function () {
     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
     body: JSON.stringify({
       studentName: studentName,
-      weekId: CONFIG.WEEK_ID,
+      weekId: WEEK_ID,
       answers: answers
     })
   })
@@ -614,6 +623,8 @@ document.getElementById('submit-btn').addEventListener('click', function () {
       showError('Could not submit. Check your connection and try again. (' + err.message + ')');
     });
 });
+
+loadWeek();
 </script>
 
 </body>

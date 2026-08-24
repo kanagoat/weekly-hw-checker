@@ -2,6 +2,9 @@
  * Weekly HW Checker — backend (Google Apps Script)
  *
  * What it does:
+ *  - Serves the question list for a given week (GET ?week=<weekId>) — text,
+ *    type, and multiple-choice options only. Correct answers, hints, and
+ *    solutions never leave the server via this endpoint.
  *  - Accepts a student's answers (POST), grades them against the "AnswerKey"
  *    sheet in this same spreadsheet (server-side, the student never sees it),
  *    logs every attempt to "Responses", and returns a JSON result with the
@@ -22,8 +25,8 @@
  *    the menu isn't there yet.
  *
  * One-time setup:
- *  1. Create a Google Sheet with two sheets: "AnswerKey" and "Responses"
- *     (see README.md for exact column headers).
+ *  1. Create a Google Sheet with sheets "AnswerKey", "Responses", and
+ *     "Weeks" (see README.md for exact column headers).
  *  2. In that spreadsheet: Extensions → Apps Script, paste this file in.
  *  3. Deploy → New deployment → Web app.
  *       Execute as: Me
@@ -31,12 +34,18 @@
  *  4. Copy the web app URL into CONFIG.SCRIPT_URL in weekly-hw-template.html.
  *  5. Set TEACHER_EMAIL below to where "student is stuck" alerts should go.
  *
- * Each week you only need to add new rows to AnswerKey (a new WeekID) —
- * this file does not need to change.
+ * Each week you only need to add rows to AnswerKey (and optionally Weeks) —
+ * this file and the HTML template do not need to change.
  */
+
+// Bump this on every deploy (Deploy → Manage deployments → Edit → New
+// version). Lets you open the deployed URL with no query params and confirm
+// the live Web App deployment actually matches this file.
+const VERSION = '2026-08-24-v1';
 
 const ANSWER_KEY_SHEET = 'AnswerKey';
 const RESPONSES_SHEET = 'Responses';
+const WEEKS_SHEET = 'Weeks';
 const PASS_THRESHOLD_PERCENT = 80;
 const ATTEMPTS_BEFORE_HINTS = 3;
 const RESUBMIT_COOLDOWN_SECONDS = 20;
@@ -59,54 +68,76 @@ function doPost(e) {
       return jsonResponse({ error: 'No answer key found for weekId: ' + weekId });
     }
 
-    const secondsSince = secondsSinceLastAttempt(studentName, weekId);
-    if (secondsSince < RESUBMIT_COOLDOWN_SECONDS) {
-      return jsonResponse({
-        error: 'cooldown',
-        cooldownSecondsRemaining: Math.ceil(RESUBMIT_COOLDOWN_SECONDS - secondsSince)
-      });
+    // Guards the read-then-write sequence below (cooldown check, attempt
+    // count, log) so two near-simultaneous requests from the same student
+    // (double-click, a retried fetch) can't both read "no prior attempt"
+    // before either has written to Responses.
+    const lock = LockService.getScriptLock();
+    if (!lock.tryLock(10000)) {
+      return jsonResponse({ error: 'Server is busy, please resubmit in a moment.' });
     }
 
-    const attempt = countPreviousAttempts(studentName, weekId) + 1;
+    let attempt, earned, possible, percent, passed, hintsUnlocked, feedback, solutions, responsesRows;
+    try {
+      // Single read of Responses for this request — countPreviousAttempts,
+      // secondsSinceLastAttempt, and (later) computeStreak all work off this
+      // same snapshot instead of each re-reading the whole sheet.
+      responsesRows = SpreadsheetApp.getActiveSpreadsheet()
+        .getSheetByName(RESPONSES_SHEET)
+        .getDataRange()
+        .getValues();
 
-    let earned = 0;
-    let possible = 0;
-    const graded = {};
+      const secondsSince = secondsSinceLastAttempt(responsesRows, studentName, weekId);
+      if (secondsSince < RESUBMIT_COOLDOWN_SECONDS) {
+        return jsonResponse({
+          error: 'cooldown',
+          cooldownSecondsRemaining: Math.ceil(RESUBMIT_COOLDOWN_SECONDS - secondsSince)
+        });
+      }
 
-    Object.keys(key).forEach(function (qId) {
-      const k = key[qId];
-      possible += k.points;
-      const rawAnswer = answers[qId];
-      const studentAnswer = (rawAnswer !== undefined && rawAnswer !== null)
-        ? rawAnswer.toString().trim()
-        : '';
-      const isCorrect = checkAnswer(studentAnswer, k);
-      if (isCorrect) earned += k.points;
-      graded[qId] = { correct: isCorrect, hint: k.hint || '', solution: k.solution || '' };
-    });
+      attempt = countPreviousAttempts(responsesRows, studentName, weekId) + 1;
 
-    const percent = possible > 0 ? Math.round((earned / possible) * 1000) / 10 : 0;
-    const passed = percent >= PASS_THRESHOLD_PERCENT;
-    const hintsUnlocked = !passed && attempt >= ATTEMPTS_BEFORE_HINTS;
+      earned = 0;
+      possible = 0;
+      const graded = {};
 
-    const feedback = {};
-    const solutions = {};
-    Object.keys(graded).forEach(function (qId) {
-      const g = graded[qId];
-      feedback[qId] = {
-        correct: g.correct,
-        hint: (!g.correct && hintsUnlocked) ? g.hint : ''
-      };
-      if (passed) solutions[qId] = g.solution;
-    });
+      Object.keys(key).forEach(function (qId) {
+        const k = key[qId];
+        possible += k.points;
+        const rawAnswer = answers[qId];
+        const studentAnswer = (rawAnswer !== undefined && rawAnswer !== null)
+          ? rawAnswer.toString().trim()
+          : '';
+        const isCorrect = checkAnswer(studentAnswer, k);
+        if (isCorrect) earned += k.points;
+        graded[qId] = { correct: isCorrect, hint: k.hint || '', solution: k.solution || '' };
+      });
 
-    logResponse(studentName, weekId, attempt, earned, possible, percent, passed, answers, feedback);
+      percent = possible > 0 ? Math.round((earned / possible) * 1000) / 10 : 0;
+      passed = percent >= PASS_THRESHOLD_PERCENT;
+      hintsUnlocked = !passed && attempt >= ATTEMPTS_BEFORE_HINTS;
+
+      feedback = {};
+      solutions = {};
+      Object.keys(graded).forEach(function (qId) {
+        const g = graded[qId];
+        feedback[qId] = {
+          correct: g.correct,
+          hint: (!g.correct && hintsUnlocked) ? g.hint : ''
+        };
+        if (passed) solutions[qId] = g.solution;
+      });
+
+      logResponse(studentName, weekId, attempt, earned, possible, percent, passed, answers, feedback);
+    } finally {
+      lock.releaseLock();
+    }
 
     if (!passed && attempt === STUCK_ALERT_ATTEMPT) {
       notifyTeacherStuckStudent(studentName, weekId, attempt, percent);
     }
 
-    const streak = computeStreak(studentName, weekId, passed);
+    const streak = computeStreak(responsesRows, studentName, weekId, passed);
 
     updateReport(weekId);
     updateTermOverview();
@@ -132,7 +163,86 @@ function doPost(e) {
 }
 
 function doGet(e) {
-  return jsonResponse({ status: 'ok', message: 'Weekly HW checker is running.' });
+  const weekId = (e.parameter && e.parameter.week) ? String(e.parameter.week).trim() : '';
+  if (!weekId) {
+    return jsonResponse({ status: 'ok', version: VERSION, message: 'Weekly HW checker is running.' });
+  }
+
+  const questions = loadQuestionsForWeek(weekId);
+  if (questions.length === 0) {
+    return jsonResponse({ error: 'No questions found for weekId: ' + weekId });
+  }
+
+  return jsonResponse({
+    weekId: weekId,
+    title: loadWeekTitle(weekId),
+    questions: questions
+  });
+}
+
+/**
+ * Reads AnswerKey and returns the public, non-secret fields for one week's
+ * questions — id, type, title, and (for "mc") the choice texts — in the
+ * same order the rows appear in the sheet. CorrectAnswer/Tolerance/Points/
+ * Hint/Solution are never included here; only loadAnswerKey() (used for
+ * grading) reads those.
+ */
+function loadQuestionsForWeek(weekId) {
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(ANSWER_KEY_SHEET);
+  const rows = sheet.getDataRange().getValues();
+  const headers = rows[0];
+
+  const idx = {
+    weekId: headers.indexOf('WeekID'),
+    questionId: headers.indexOf('QuestionID'),
+    type: headers.indexOf('Type'),
+    title: headers.indexOf('Title'),
+    choices: headers.indexOf('Choices')
+  };
+
+  const questions = [];
+  for (let i = 1; i < rows.length; i++) {
+    const row = rows[i];
+    if (String(row[idx.weekId]).trim() !== weekId) continue;
+
+    const type = String(row[idx.type]).trim().toLowerCase();
+    const question = {
+      id: String(row[idx.questionId]).trim(),
+      type: type,
+      title: idx.title >= 0 ? String(row[idx.title] || '') : ''
+    };
+
+    if (type === 'mc') {
+      const choicesRaw = idx.choices >= 0 ? String(row[idx.choices] || '') : '';
+      question.choices = choicesRaw
+        .split('|')
+        .map(function (s) { return s.trim(); })
+        .filter(function (s) { return s.length > 0; });
+    }
+
+    questions.push(question);
+  }
+  return questions;
+}
+
+/** The display title for a week from the "Weeks" sheet, or a generic fallback. */
+function loadWeekTitle(weekId) {
+  const fallback = 'Homework — ' + weekId;
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(WEEKS_SHEET);
+  if (!sheet) return fallback;
+
+  const rows = sheet.getDataRange().getValues();
+  const headers = rows[0];
+  const idx = { weekId: headers.indexOf('WeekID'), title: headers.indexOf('Title') };
+  if (idx.weekId < 0 || idx.title < 0) return fallback;
+
+  for (let i = 1; i < rows.length; i++) {
+    if (String(rows[i][idx.weekId]).trim() === weekId) {
+      const title = String(rows[i][idx.title] || '').trim();
+      return title || fallback;
+    }
+  }
+  return fallback;
 }
 
 function jsonResponse(obj) {
@@ -205,10 +315,8 @@ function checkAnswer(studentAnswer, key) {
   });
 }
 
-/** Counts how many times this student has already submitted this week. */
-function countPreviousAttempts(studentName, weekId) {
-  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(RESPONSES_SHEET);
-  const rows = sheet.getDataRange().getValues();
+/** Counts how many times this student has already submitted this week, from an already-loaded Responses snapshot. */
+function countPreviousAttempts(rows, studentName, weekId) {
   const headers = rows[0];
   const idx = {
     studentName: headers.indexOf('StudentName'),
@@ -227,10 +335,8 @@ function countPreviousAttempts(studentName, weekId) {
   return count;
 }
 
-/** Seconds since this student's last submission for this week (Infinity if none yet). */
-function secondsSinceLastAttempt(studentName, weekId) {
-  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(RESPONSES_SHEET);
-  const rows = sheet.getDataRange().getValues();
+/** Seconds since this student's last submission for this week (Infinity if none yet), from an already-loaded Responses snapshot. */
+function secondsSinceLastAttempt(rows, studentName, weekId) {
   const headers = rows[0];
   const idx = {
     studentName: headers.indexOf('StudentName'),
@@ -252,7 +358,7 @@ function secondsSinceLastAttempt(studentName, weekId) {
   return (Date.now() - lastTime) / 1000;
 }
 
-/** Distinct WeekIDs that exist in AnswerKey, sorted chronologically (by WeekID string). */
+/** Distinct WeekIDs that exist in AnswerKey, sorted chronologically (see compareWeekIds). */
 function getAllWeekIds() {
   const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(ANSWER_KEY_SHEET);
   const rows = sheet.getDataRange().getValues();
@@ -263,18 +369,39 @@ function getAllWeekIds() {
     const wk = String(rows[i][weekIdx]).trim();
     if (wk) set[wk] = true;
   }
-  return Object.keys(set).sort();
+  return Object.keys(set).sort(compareWeekIds);
 }
 
 /**
- * Number of consecutive weeks (ending at weekId) this student has passed.
- * 0 if this attempt did not pass.
+ * Sorts WeekIDs by their trailing number (e.g. "week-2" before "week-10")
+ * regardless of zero-padding, so streaks and chart order stay chronological
+ * whether IDs are padded ("week-01") or not ("week-1"). A WeekID with no
+ * trailing number falls back to a plain string compare against the other
+ * side, so an unexpected format doesn't throw — it just sorts after any
+ * WeekID that does have a trailing number.
  */
-function computeStreak(studentName, weekId, passedThisAttempt) {
+function compareWeekIds(a, b) {
+  const numA = trailingNumber(a);
+  const numB = trailingNumber(b);
+  if (numA !== null && numB !== null) return numA - numB;
+  if (numA !== null) return -1;
+  if (numB !== null) return 1;
+  return a.localeCompare(b);
+}
+
+/** The trailing integer in a string (e.g. "week-9" -> 9), or null if it doesn't end in digits. */
+function trailingNumber(s) {
+  const match = /(\d+)\s*$/.exec(s);
+  return match ? parseInt(match[1], 10) : null;
+}
+
+/**
+ * Number of consecutive weeks (ending at weekId) this student has passed,
+ * from an already-loaded Responses snapshot. 0 if this attempt did not pass.
+ */
+function computeStreak(rows, studentName, weekId, passedThisAttempt) {
   if (!passedThisAttempt) return 0;
 
-  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(RESPONSES_SHEET);
-  const rows = sheet.getDataRange().getValues();
   const headers = rows[0];
   const idx = {
     studentName: headers.indexOf('StudentName'),
@@ -511,7 +638,7 @@ function updateTermOverview() {
     }
   }
 
-  const weekIds = Object.keys(weekData).sort();
+  const weekIds = Object.keys(weekData).sort(compareWeekIds);
   const summary = weekIds.map(function (wk) {
     const students = Object.keys(weekData[wk]).map(function (k) { return weekData[wk][k]; });
     const count = students.length;

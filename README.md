@@ -1,12 +1,14 @@
 # Weekly HW Checker — what it is and how to run it
 
-Idea: once a week you take `weekly-hw-template.html`, copy it into a new file,
-change the title and the list of questions (`QUESTIONS`), and the answers get
-checked NOT in the student's browser (like a first pass with a screenshot
-would), but on the server — in a Google Apps Script bound to your Google
-Sheet. So the grade can't be faked via DevTools: the student physically
-never sees the correct answers or the checking logic — only the question and
-an input box.
+Idea: `weekly-hw-template.html` is the same page every week — you never copy
+or edit it. Each week's questions (text, type, multiple-choice options) live
+as rows in your Google Sheet's `AnswerKey` tab, and the page fetches that
+week's questions from the server when a student opens it with `?week=week-01`
+(or whichever `WeekID`) in the URL. Answers get checked NOT in the student's
+browser (like a first pass with a screenshot would), but on the server — in a
+Google Apps Script bound to your Google Sheet. So the grade can't be faked via
+DevTools: the student physically never sees the correct answers or the
+checking logic — only the question and an input box.
 
 The student sees their result immediately on the page (percentage + a
 breakdown per question), and a row with their name, score, and submission
@@ -36,35 +38,58 @@ On top of that:
 
 ### Step 1 — create a Google Sheet
 Create a new spreadsheet, e.g. "HW Checker — Year 11 Maths". Inside, create
-two sheets:
+three sheets:
 
-**`AnswerKey` sheet** (the answer key, students never see it) — headers in row 1:
+**`AnswerKey` sheet** — this is where you type every question, its options,
+its correct answer, hint, and solution. Students never see this sheet
+directly; the page only ever receives the fields it's allowed to (`Title`,
+`Type`, `Choices`) until an answer unlocks its `Hint`/`Solution`. Headers in
+row 1:
 
-| WeekID | QuestionID | Type | CorrectAnswer | Tolerance | Points | Hint | Solution |
-|---|---|---|---|---|---|---|---|
-| week-01 | q1 | numeric | 2.5 | 0.01 | 1 | Use the quadratic formula with $a=2, b=-3, c=-5$, then pick the positive root. | $x = \dfrac{3 \pm \sqrt{9+40}}{4}$, so $x=2.5$ or $x=-1$. The positive root is $x=2.5$. |
-| week-01 | q2 | text | 6x-4\|-4+6x | | 1 | Differentiate term by term: $6x$, $-4$, $0$. | $\dfrac{dy}{dx} = 6x - 4$. |
-| week-01 | q3 | mc | b | | 1 | $(2x^3)^2 = 2^2 \times (x^3)^2 = 4x^6$. | $(2x^3)^2 = 4x^6$, so the answer is (b). |
-| week-01 | q4 | numeric | 4 | 0 | 1 | Add the two equations to eliminate $y$. | Adding: $(2x+y)+(x-y)=11+1 \Rightarrow 3x=12 \Rightarrow x=4$. |
+| WeekID | QuestionID | Type | Title | Choices | CorrectAnswer | Tolerance | Points | Hint | Solution |
+|---|---|---|---|---|---|---|---|---|---|
+| week-01 | q1 | numeric | Solve $2x^2 - 3x - 5 = 0$. Give the positive root as a decimal. | | 2.5 | 0.01 | 1 | Use the quadratic formula with $a=2, b=-3, c=-5$, then pick the positive root. | $x = \dfrac{3 \pm \sqrt{9+40}}{4}$, so $x=2.5$ or $x=-1$. The positive root is $x=2.5$. |
+| week-01 | q2 | text | Differentiate $y = 3x^2 - 4x + 7$. Give $\dfrac{dy}{dx}$ in the form $ax+b$. | | 6x-4\|-4+6x | | 1 | Differentiate term by term: $6x$, $-4$, $0$. | $\dfrac{dy}{dx} = 6x - 4$. |
+| week-01 | q3 | mc | Which expression is equivalent to $(2x^3)^2$? | $4x^5$\|$4x^6$\|$2x^6$ | $4x^6$ | | 1 | $(2x^3)^2 = 2^2 \times (x^3)^2 = 4x^6$. | $(2x^3)^2 = 4x^6$. |
+| week-01 | q4 | numeric | Solve simultaneously: $2x + y = 11$ and $x - y = 1$. Find $x$. | | 4 | 0 | 1 | Add the two equations to eliminate $y$. | Adding: $(2x+y)+(x-y)=11+1 \Rightarrow 3x=12 \Rightarrow x=4$. |
 
 Column notes:
 - **Type**: `numeric` (a number, checked against `Tolerance`), `text` (a
-  string, case/whitespace-insensitive), or `mc` (multiple choice — checked
-  like text against the chosen option's value, e.g. `a`/`b`/`c`).
-- **CorrectAnswer**: for `text`/`mc` you can list several accepted answers
-  separated by `|`, e.g. `6x-4|-4+6x` — either form is accepted.
+  string, case/whitespace-insensitive), or `mc` (multiple choice).
+- **Title**: the question text students see. Can contain `$...$` LaTeX — the
+  page renders it with KaTeX.
+- **Choices**: `mc` only — the option texts the student picks from, separated
+  by `|`, e.g. `$4x^5$|$4x^6$|$2x^6$`. Their on-screen order is shuffled per
+  student; leave this blank for `numeric`/`text` questions.
+- **CorrectAnswer**: for `mc`, this is the *text* of the correct option (must
+  match one of the `Choices` entries) — not a letter code. For `text`/`mc`
+  you can list several accepted answers separated by `|`, e.g. `6x-4|-4+6x`
+  — either form is accepted.
 - **Tolerance**: `numeric` only — allowed margin of error (0 = exact match,
   0.01 if the question involves decimals).
+- **Points**: leave blank for 1 point; set a number to weight a question
+  differently.
 - **Hint**: a short hint the student sees once hints unlock for that
   question on that attempt (see below) — this is the "error breakdown".
 - **Solution**: the full worked solution, shown for every question once the
-  student passes. Both `Hint` and `Solution` can contain `$...$` LaTeX — the
-  page renders it with KaTeX.
+  student passes. Both `Hint` and `Solution` can contain `$...$` LaTeX.
 - **Watch out for Sheets auto-converting decimals to dates.** Typing `2.5`
   into `CorrectAnswer`/`Tolerance` can silently become a date like `02.05.2026`
   depending on your locale. If a numeric question always grades wrong, select
   those columns and set **Format → Number → Plain text** first, then re-type
   the value.
+- **Row order is display order.** Questions for a week appear on the page in
+  the same order their rows appear in `AnswerKey` — so type them top to
+  bottom in the order you want students to see them.
+
+**`Weeks` sheet** (optional, just controls the page heading) — headers:
+
+| WeekID | Title |
+|---|---|
+| week-01 | HW — Week 1: Quadratics, Calculus & Simultaneous Equations |
+
+If a `WeekID` has no row here (or the sheet doesn't exist), the page just
+shows a generic "Homework — week-01" heading — everything else still works.
 
 **`Responses` sheet** (submission log, filled in automatically) — headers:
 
@@ -109,19 +134,21 @@ you'll need it in the HTML template.
 
 ### Step 4 — put the URL in the HTML
 Open `weekly-hw-template.html`, and in the `CONFIG` block paste the copied
-URL into `SCRIPT_URL`.
+URL into `SCRIPT_URL`. That's the only edit this file ever needs — you won't
+touch it again from week to week.
 
 ## 2. What to do every week
 
-1. Copy `weekly-hw-template.html` into a new file (e.g. `week-02.html`).
-2. In `CONFIG`, change `WEEK_ID` (e.g. `"week-02"`) and `PAGE_TITLE`.
-3. Edit the `QUESTIONS` array — question text and `type` (correct answers
-   are **not** written here — only in the Google Sheet).
-4. Add new rows to `AnswerKey` with the same `WeekID` as in `CONFIG`, and the
-   correct answers/hints for each `QuestionID`.
-5. Send the HTML file to students (see hosting notes below).
+1. Add rows to `AnswerKey` for the new week — pick a `WeekID` (e.g.
+   `week-02`), then one row per question with its `Title`, `Type`, `Choices`
+   (if `mc`), `CorrectAnswer`, `Hint`, and `Solution`.
+2. Optionally add a matching row to `Weeks` for a nicer page heading.
+3. Send students the link, with that week's `WeekID` appended as a `?week=`
+   parameter, e.g.:
+   `https://your-hosting-url/weekly-hw-template.html?week=week-02`
 
-`Code.gs` itself doesn't need to change from week to week.
+Neither `Code.gs` nor `weekly-hw-template.html` need to change — the page is
+shared across every week, it just reads different rows depending on the link.
 
 ## 3. Hints and multiple attempts
 
@@ -178,6 +205,11 @@ hosting: e.g. GitHub Pages (push the file to a repo, enable Pages in
 settings) or Google Sites (embed the HTML). If Claude Code is set up to
 deploy for you, you can ask it to stand up GitHub Pages for this repo — a
 five-minute one-time setup.
+
+Whatever the hosting URL turns out to be, every week you share the *same*
+file with a different `?week=` value — no new file, no redeploy, just a
+different link (or the same link with the value changed, if you're
+distributing it some other way than a fresh URL each time).
 
 ## 7. Limitations worth knowing
 
