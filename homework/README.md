@@ -17,18 +17,34 @@ Source: *Cambridge International AS & A Level Mathematics: Pure Mathematics 1*
 10th grade AS-level 2025–26 plan, which gives Chapter 3 nine hours across
 five topics.
 
-## How to load a week into the sheet
+## How to load these into the sheet
 
-1. Run **HW Checker → First-time setup: 1) Init structure** once, if you
-   haven't already. The TSV files include a `Grade` column, and that command
-   is what adds it to `AnswerKey`.
-2. Open `AnswerKey` and click the first empty cell in column **A**.
-3. Open the `.tsv` file in a text editor, select everything **except the
-   header row**, and copy.
-4. Paste. Sheets splits tab-separated text across columns automatically, so
-   the 11 columns land in `WeekID … Grade` in order.
-5. Check that column K (`Grade`) reads `10` on the new rows, and that column E
-   (`Tolerance`) shows `0` and not a date — see the warning below.
+**Use the menu command — it's one click and avoids the formatting hazard below.**
+
+The same 40 questions are embedded in `Code.gs` as `GRADE10_CH3_SEED`, so once
+you've pasted the new `Code.gs` and deployed it:
+
+1. **HW Checker → First-time setup: 1) Init structure** (adds the `Grade`
+   column and backfills your existing questions as grade 9).
+2. **HW Checker → Load grade 10 Chapter 3 questions.**
+
+That writes all 40 rows, forces the answer columns to plain text so nothing is
+reinterpreted, applies the `Type` dropdown, and creates both response sheets.
+It refuses to run twice, so it can't duplicate questions.
+
+### Pasting the TSV by hand instead
+
+Only needed if you'd rather not use the menu command:
+
+1. Run **Init structure** first — the TSVs have a `Grade` column that doesn't
+   exist in `AnswerKey` until then, and pasting first puts those values in a
+   column with no header.
+2. Select columns **D** (`CorrectAnswer`) and **E** (`Tolerance`) and set
+   **Format → Number → Plain text**, or the answers below will be mangled.
+3. Click the first empty cell in column **A**.
+4. Copy everything from the `.tsv` **except the header row**, and paste. Sheets
+   splits tab-separated text across columns automatically.
+5. Check column K (`Grade`) reads `10` on the new rows.
 
 Then the week is live at:
 
@@ -38,11 +54,12 @@ https://kanagoat.github.io/weekly-hw-checker/weekly-hw-template.html?week=week-0
 
 ### Watch the number formatting
 
-Sheets can turn plain values into dates depending on your locale. Before
-pasting, select columns **D** (`CorrectAnswer`) and **E** (`Tolerance`) and set
-**Format → Number → Plain text**. Question `week-01 q7` has the answer `-1/6`
-and `week-02 q13` has `-3/4`; without plain-text formatting Sheets may store
-those as dates or as decimals, and the question will then always grade wrong.
+Sheets can turn plain values into dates depending on your locale. Question
+`week-01 q7` has the answer `-1/6` and `week-02 q13` has `-3/4`; stored as a
+date or a decimal, those questions would always grade wrong.
+
+The menu command handles this for you by setting the answer columns to plain
+text before writing. If you paste by hand, set that format yourself first.
 
 ## Regenerating
 

@@ -320,6 +320,11 @@ const URL_GRADE = (PARAMS.get('grade') || '').trim();
 let GRADE = '';
 let STUDENT_NAME = '';
 
+// Cleared when the server doesn't report any grades, which means it is running
+// a build from before the 9/10 split. The page then stops asking for a grade
+// rather than trapping the student behind an empty dropdown.
+let GRADE_REQUIRED = true;
+
 // Populated once the week's questions have loaded (see loadWeek() below).
 let QUESTIONS = [];
 
@@ -425,6 +430,13 @@ function initGate() {
     .then(function (data) {
       loadingBlock.style.display = 'none';
       const grades = data.grades || [];
+
+      if (grades.length === 0) {
+        GRADE_REQUIRED = false;
+        gradeField.style.display = 'none';
+        return;
+      }
+
       grades.forEach(function (g) {
         const opt = document.createElement('option');
         opt.value = g;
@@ -583,7 +595,7 @@ function startCooldownCountdown(seconds) {
 document.getElementById('submit-btn').addEventListener('click', function () {
   clearError();
 
-  if (!STUDENT_NAME || !GRADE) {
+  if (!STUDENT_NAME || (GRADE_REQUIRED && !GRADE)) {
     showError('Please enter your grade and name first.');
     return;
   }
@@ -718,10 +730,10 @@ document.getElementById('submit-btn').addEventListener('click', function () {
 function startHomework() {
   clearError();
 
-  const grade = URL_GRADE || document.getElementById('student-grade').value;
+  const grade = URL_GRADE || (GRADE_REQUIRED ? document.getElementById('student-grade').value : '');
   const name = document.getElementById('student-name').value.trim();
 
-  if (!grade) {
+  if (GRADE_REQUIRED && !grade) {
     showError('Please select your grade.');
     return;
   }
@@ -739,7 +751,7 @@ function startHomework() {
 
   const summary = document.getElementById('identity-summary');
   summary.innerHTML = '';
-  summary.appendChild(document.createTextNode('Grade ' + grade + ' · '));
+  if (grade) summary.appendChild(document.createTextNode('Grade ' + grade + ' · '));
   const strong = document.createElement('strong');
   strong.textContent = name;
   summary.appendChild(strong);
