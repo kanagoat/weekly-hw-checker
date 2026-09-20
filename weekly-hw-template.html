@@ -58,12 +58,31 @@
     font-weight: bold;
     margin-bottom: 8px;
   }
-  #student-name-block input {
+  #student-name-block input,
+  #student-name-block select {
     width: 100%;
     padding: 10px 12px;
     font-size: 1em;
     border: 1px solid var(--border);
     border-radius: 6px;
+    background: #fff;
+  }
+  #student-name-block .field + .field {
+    margin-top: 14px;
+  }
+  #start-btn {
+    margin-top: 16px;
+  }
+  /* Once the questions are showing, the identity block is locked to what the
+     student confirmed — re-typing a name mid-homework would silently start a
+     different student's attempt history. */
+  #identity-summary {
+    display: none;
+    font-size: 0.95em;
+    color: var(--muted);
+  }
+  #identity-summary strong {
+    color: var(--text);
   }
 
   .question-card {
@@ -121,7 +140,8 @@
     color: var(--muted);
   }
 
-  #submit-btn {
+  #submit-btn,
+  #start-btn {
     width: 100%;
     padding: 14px;
     font-size: 1.05em;
@@ -132,7 +152,8 @@
     cursor: pointer;
     font-weight: bold;
   }
-  #submit-btn:hover { background: var(--teal-dark); }
+  #submit-btn:hover,
+  #start-btn:hover { background: var(--teal-dark); }
   #submit-btn:disabled { opacity: 0.6; cursor: default; }
 
   #result-block {
@@ -232,11 +253,24 @@
 
 <main>
   <div id="student-name-block">
-    <label for="student-name">Full name</label>
-    <input type="text" id="student-name" placeholder="e.g. Alex Morgan">
+    <div class="field" id="grade-field">
+      <label for="student-grade">Your grade</label>
+      <select id="student-grade">
+        <option value="">Select your grade…</option>
+      </select>
+    </div>
+
+    <div class="field" id="name-field">
+      <label for="student-name">Full name</label>
+      <input type="text" id="student-name" placeholder="e.g. Alex Morgan">
+    </div>
+
+    <button id="start-btn">Show my homework</button>
+
+    <div id="identity-summary"></div>
   </div>
 
-  <div id="loading-block">Loading this week's questions…</div>
+  <div id="loading-block">Loading…</div>
   <div id="questions-container"></div>
 
   <button id="submit-btn" style="display:none;">Submit for checking</button>
@@ -272,7 +306,19 @@ const CONFIG = {
   SCRIPT_URL: "https://script.google.com/macros/s/AKfycbz7CnzOs39aO8jTRa7C7Zdp3thOrDvQEDNV88QE0bV4obvLcWDFYp6AuIFd4sqd4Rs/exec"
 };
 
-const WEEK_ID = new URLSearchParams(window.location.search).get('week');
+const PARAMS = new URLSearchParams(window.location.search);
+const WEEK_ID = PARAMS.get('week');
+
+// The grade can be pinned by the link (?grade=9) so a student never has to
+// pick, and can never pick wrong. Without it they choose from the grades the
+// AnswerKey sheet actually has.
+const URL_GRADE = (PARAMS.get('grade') || '').trim();
+
+// Set once the student confirms who they are; every later request uses these
+// rather than re-reading the inputs, so editing the name field mid-homework
+// can't split one student's attempts across two identities.
+let GRADE = '';
+let STUDENT_NAME = '';
 
 // Populated once the week's questions have loaded (see loadWeek() below).
 let QUESTIONS = [];
@@ -350,17 +396,56 @@ function buildQuestionsUI(questions) {
   });
 }
 
-/** Fetches this week's question list from the server and renders the page. */
-function loadWeek() {
+/**
+ * First screen: work out which grades exist so the student can pick one.
+ * A link that already carries ?grade= skips the dropdown entirely — the
+ * student only confirms their name.
+ */
+function initGate() {
   const loadingBlock = document.getElementById('loading-block');
+  const gradeField = document.getElementById('grade-field');
+  const select = document.getElementById('student-grade');
 
   if (!WEEK_ID) {
     loadingBlock.style.display = 'none';
     showError('No week specified. Open this page with ?week=week-01 (matching a WeekID in your AnswerKey sheet) added to the URL.');
+    document.getElementById('start-btn').style.display = 'none';
     return;
   }
 
-  fetch(CONFIG.SCRIPT_URL + '?week=' + encodeURIComponent(WEEK_ID))
+  if (URL_GRADE) {
+    // The link decided the grade; don't offer a choice that could undo it.
+    gradeField.style.display = 'none';
+    loadingBlock.style.display = 'none';
+    return;
+  }
+
+  fetch(CONFIG.SCRIPT_URL)
+    .then(function (res) { return res.json(); })
+    .then(function (data) {
+      loadingBlock.style.display = 'none';
+      const grades = data.grades || [];
+      grades.forEach(function (g) {
+        const opt = document.createElement('option');
+        opt.value = g;
+        opt.textContent = 'Grade ' + g;
+        select.appendChild(opt);
+      });
+      if (grades.length === 1) select.value = grades[0];
+    })
+    .catch(function (err) {
+      loadingBlock.style.display = 'none';
+      showError('Could not reach the homework server. Check your connection and try again. (' + err.message + ')');
+    });
+}
+
+/** Fetches this week's question list from the server and renders the page. */
+function loadWeek() {
+  const loadingBlock = document.getElementById('loading-block');
+  loadingBlock.textContent = 'Loading this week' + String.fromCharCode(8217) + 's questions' + String.fromCharCode(8230);
+  loadingBlock.style.display = 'block';
+
+  fetch(CONFIG.SCRIPT_URL + '?week=' + encodeURIComponent(WEEK_ID) + '&grade=' + encodeURIComponent(GRADE))
     .then(function (res) { return res.json(); })
     .then(function (data) {
       loadingBlock.style.display = 'none';
@@ -498,9 +583,8 @@ function startCooldownCountdown(seconds) {
 document.getElementById('submit-btn').addEventListener('click', function () {
   clearError();
 
-  const studentName = document.getElementById('student-name').value.trim();
-  if (!studentName) {
-    showError('Please enter your full name before submitting.');
+  if (!STUDENT_NAME || !GRADE) {
+    showError('Please enter your grade and name first.');
     return;
   }
 
@@ -516,7 +600,8 @@ document.getElementById('submit-btn').addEventListener('click', function () {
     // by default. The body is still valid JSON — the server parses it itself.
     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
     body: JSON.stringify({
-      studentName: studentName,
+      studentName: STUDENT_NAME,
+      grade: GRADE,
       weekId: WEEK_ID,
       answers: answers
     })
@@ -624,7 +709,52 @@ document.getElementById('submit-btn').addEventListener('click', function () {
     });
 });
 
-loadWeek();
+/**
+ * Locks in who this is, then loads their grade's questions. After this the
+ * grade select and name box are read-only: the attempt count, cooldown and
+ * streak on the server are all keyed to this exact name, so letting it
+ * change mid-page would quietly fork the student's history.
+ */
+function startHomework() {
+  clearError();
+
+  const grade = URL_GRADE || document.getElementById('student-grade').value;
+  const name = document.getElementById('student-name').value.trim();
+
+  if (!grade) {
+    showError('Please select your grade.');
+    return;
+  }
+  if (!name) {
+    showError('Please enter your full name.');
+    return;
+  }
+
+  GRADE = grade;
+  STUDENT_NAME = name;
+
+  document.getElementById('grade-field').style.display = 'none';
+  document.getElementById('name-field').style.display = 'none';
+  document.getElementById('start-btn').style.display = 'none';
+
+  const summary = document.getElementById('identity-summary');
+  summary.innerHTML = '';
+  summary.appendChild(document.createTextNode('Grade ' + grade + ' · '));
+  const strong = document.createElement('strong');
+  strong.textContent = name;
+  summary.appendChild(strong);
+  summary.style.display = 'block';
+
+  loadWeek();
+}
+
+document.getElementById('start-btn').addEventListener('click', startHomework);
+
+document.getElementById('student-name').addEventListener('keydown', function (e) {
+  if (e.key === 'Enter') startHomework();
+});
+
+initGate();
 </script>
 
 </body>
